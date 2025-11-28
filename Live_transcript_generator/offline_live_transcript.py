@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Fast offline live system-audio transcription using faster-whisper.
+Fast offline live system-audio transcription using faster-whisper,
+with interactive choices for model and language.
 
 Install dependencies (once):
     pip install soundcard numpy torch faster-whisper
@@ -12,7 +13,8 @@ Also make sure FFmpeg is installed on your system:
 
 Usage:
     python offline_live_transcript.py
-    Press Ctrl+C to stop; you'll then be asked (on stderr) if you want to save.
+    - Choose model + language in the terminal.
+    - Press Ctrl+C to stop; you'll then be asked (on stderr) if you want to save.
 """
 
 import sys
@@ -30,12 +32,88 @@ from faster_whisper import WhisperModel
 
 SAMPLE_RATE = 16_000         # Hz
 CHUNK_SECONDS = 2            # smaller chunk for lower latency
-MODEL_NAME = "small"         # "tiny", "base", "small", "medium", "large-v3", ...
+
+# Defaults (can be overridden by interactive choices)
+MODEL_NAME = "small"         # "tiny", "base", "small", "medium", "large-v3"
 DEVICE = "auto"              # "auto", "cpu", or "cuda"
 COMPUTE_TYPE = "int8"        # e.g. "int8", "int8_float16", "float16", "float32"
-LANGUAGE = None              # e.g. "en" to force English; None = auto-detect
+LANGUAGE = None              # None = auto-detect; or "en", "fr", "es", "ar"
+
+# Target loudness for normalization (RMS in linear scale, 0–1)
+TARGET_RMS = 0.1
+MAX_GAIN_DB = 25.0           # don’t boost more than this per chunk
 
 # ------------------------------------------------ #
+
+
+def choose_model_name() -> str:
+    """
+    Ask the user which Whisper model to use.
+    """
+    options = {
+        "1": "tiny",
+        "2": "base",
+        "3": "small",
+        "4": "medium",
+        "5": "large-v3",
+    }
+    default_key = "3"  # "small"
+
+    print("\nSelect Whisper model:", file=sys.stderr)
+    print("  [1] tiny     (fastest, lowest quality)", file=sys.stderr)
+    print("  [2] base     (fast, low/medium quality)", file=sys.stderr)
+    print("  [3] small    (default: good balance)", file=sys.stderr)
+    print("  [4] medium   (slower, better quality)", file=sys.stderr)
+    print("  [5] large-v3 (slowest, best quality)", file=sys.stderr)
+    print(f"Enter choice [default {default_key}]: ", end="", flush=True, file=sys.stderr)
+
+    try:
+        choice = input().strip()
+    except EOFError:
+        choice = ""
+
+    model_name = options.get(choice or default_key, options[default_key])
+    print(f"Using model: {model_name}", file=sys.stderr)
+    return model_name
+
+
+def choose_language() -> str | None:
+    """
+    Ask the user which language to use (or auto-detect).
+    Returns language code or None.
+    """
+    options = {
+        "1": None,    # Auto-detect
+        "2": "en",    # English
+        "3": "fr",    # French
+        "4": "es",    # Spanish
+        "5": "ar",    # Arabic
+    }
+    labels = {
+        None: "Auto-detect",
+        "en": "English",
+        "fr": "French",
+        "es": "Spanish",
+        "ar": "Arabic",
+    }
+    default_key = "1"  # Auto-detect
+
+    print("\nSelect language:", file=sys.stderr)
+    print("  [1] Auto-detect", file=sys.stderr)
+    print("  [2] English", file=sys.stderr)
+    print("  [3] French", file=sys.stderr)
+    print("  [4] Spanish", file=sys.stderr)
+    print("  [5] Arabic", file=sys.stderr)
+    print(f"Enter choice [default {default_key}]: ", end="", flush=True, file=sys.stderr)
+
+    try:
+        choice = input().strip()
+    except EOFError:
+        choice = ""
+
+    lang_code = options.get(choice or default_key, options[default_key])
+    print(f"Language: {labels[lang_code]}", file=sys.stderr)
+    return lang_code
 
 
 def get_loopback_microphone():
@@ -83,16 +161,52 @@ def mix_down_to_mono(audio_np: np.ndarray) -> np.ndarray:
     """
     if audio_np.ndim == 1:
         return audio_np.astype(np.float32)
-    # Average across channels
     mono = np.mean(audio_np, axis=1)
     return mono.astype(np.float32)
+
+
+def normalize_audio(audio: np.ndarray,
+                    target_rms: float = TARGET_RMS,
+                    max_gain_db: float = MAX_GAIN_DB) -> np.ndarray:
+    """
+    Simple RMS normalization with a cap on maximum gain.
+
+    - audio: 1D float32 in [-1, 1]
+    - target_rms: desired RMS level (e.g. 0.1)
+    - max_gain_db: limit boost to avoid huge amplification of noise
+    """
+    eps = 1e-8
+    audio = audio.astype(np.float32)
+
+    rms = np.sqrt(np.mean(audio * audio) + eps)
+    if rms < eps:
+        return audio  # almost silent
+
+    target_gain = target_rms / rms
+    max_gain = 10.0 ** (max_gain_db / 20.0)
+    gain = min(target_gain, max_gain)
+
+    audio = audio * gain
+    audio = np.clip(audio, -1.0, 1.0)
+
+    return audio.astype(np.float32)
+
+
+def enhance_audio(audio_np: np.ndarray) -> np.ndarray:
+    """
+    Mono + normalization step before feeding into the model.
+    """
+    mono = mix_down_to_mono(audio_np)
+    normalized = normalize_audio(mono)
+    return normalized
 
 
 def transcription_loop(stop_event: threading.Event,
                        audio_queue: queue.Queue,
                        transcript_buffer: list[str],
                        print_lock: threading.Lock,
-                       model: WhisperModel):
+                       model: WhisperModel,
+                       language: str | None):
     """
     Read audio chunks from the queue, run faster-whisper locally,
     append/print transcription results.
@@ -108,14 +222,13 @@ def transcription_loop(stop_event: threading.Event,
             continue
 
         try:
-            mono_audio = mix_down_to_mono(data)
+            processed_audio = enhance_audio(data)
 
-            # Transcribe this chunk. We keep decoding settings very light for speed.
             segments, info = model.transcribe(
-                mono_audio,
-                language=LANGUAGE,          # None => auto-detect
-                vad_filter=True,            # skip silence, speeds things up
-                beam_size=1,                # greedy / small beam for speed
+                processed_audio,
+                language=language,           # None => auto-detect
+                vad_filter=True,             # skip silence
+                beam_size=1,                 # greedy / small beam for speed
                 best_of=1,
                 condition_on_previous_text=False,
                 temperature=0.0,
@@ -178,8 +291,14 @@ def save_transcript(transcript_buffer: list[str]):
 
 
 def main():
+    global MODEL_NAME, LANGUAGE
+
+    # Ask user for model + language
+    MODEL_NAME = choose_model_name()
+    LANGUAGE = choose_language()
+
     print(
-        f"Loading faster-whisper model '{MODEL_NAME}' "
+        f"\nLoading faster-whisper model '{MODEL_NAME}' "
         f"(device={DEVICE}, compute_type={COMPUTE_TYPE})...",
         file=sys.stderr,
     )
@@ -208,7 +327,7 @@ def main():
     )
     transcribe_thread = threading.Thread(
         target=transcription_loop,
-        args=(stop_event, audio_queue, transcript_buffer, print_lock, model),
+        args=(stop_event, audio_queue, transcript_buffer, print_lock, model, LANGUAGE),
         daemon=True,
     )
 
