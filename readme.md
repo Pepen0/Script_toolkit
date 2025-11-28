@@ -2,7 +2,7 @@
 
 This repository contains a small collection of scripts and helpers for my vibe conding activities. It is organized into a couple of focused subfolders and includes a simple shell helper and a local transcription script.
 
-Quick summary:
+### Quick summary:
 
 - `Extract_codebase/` : contains shell helpers for concatenating or preparing extracted code.
 - `Extract_transcript/` : contains a Python transcription script and its `requirements.txt` for local speech-to-text usage.
@@ -36,4 +36,19 @@ python Extract_transcript/transcribe_local.py --input path/to/audio.wav --output
 
 ```zsh
 sh Extract_codebase/concat.sh combined.txt
+```
+
+### To extract live transcript:
+1. install FFmpeg and dependencies
+
+```zsh
+brew install ffmpeg
+python3 -m venv venv
+source venv/bin/activate
+pip install -r Live_transcript_generator/requirements.txt
+```
+2. Run the live transcript script:
+
+```zsh
+python Live_transcript_generator/offline_live_transcript.py
 ```

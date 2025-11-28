@@ -1,1 +1,5 @@
 /.DS_Store
+
+# Python virtual environments
+Live_transcript_generator/venv
+Extract_transcript_from_video/venv

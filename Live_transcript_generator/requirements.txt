@@ -1,0 +1,5 @@
+numpy
+soundcard
+torch
+openai-whisper
+faster_whisper
