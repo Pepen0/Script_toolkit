@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Local Transcript Extractor</title>
+  <style>
+    :root {
+      --bg: #f6f8fb;
+      --card: #ffffff;
+      --text: #1f2937;
+      --muted: #6b7280;
+      --line: #dbe3ee;
+      --accent: #1f6fb8;
+    }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Segoe UI", Tahoma, sans-serif;
+    }
+    .wrap {
+      max-width: 780px;
+      margin: 28px auto;
+      padding: 0 16px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 20px;
+    }
+    h1 {
+      margin: 0 0 8px;
+      font-size: 34px;
+    }
+    .muted { color: var(--muted); margin: 0 0 14px; }
+    label {
+      display: block;
+      font-size: 14px;
+      margin-top: 12px;
+    }
+    input, select, textarea, button {
+      width: 100%;
+      box-sizing: border-box;
+      margin-top: 6px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 9px 10px;
+      font-size: 14px;
+      background: #fff;
+    }
+    textarea { min-height: 76px; resize: vertical; }
+    .dropzone {
+      margin-top: 12px;
+      border: 1px dashed #9bb4cf;
+      border-radius: 8px;
+      padding: 14px;
+      text-align: center;
+      color: var(--muted);
+      background: #fafcff;
+    }
+    .dropzone.drag {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: #f3f8fe;
+    }
+    .row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 8px;
+    }
+    .row input[type="checkbox"] {
+      width: auto;
+      margin: 0;
+      padding: 0;
+    }
+    details {
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: #fbfdff;
+    }
+    summary {
+      cursor: pointer;
+      font-weight: 600;
+      user-select: none;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 10px 12px;
+      margin-top: 10px;
+    }
+    .outputs {
+      margin-top: 14px;
+      display: grid;
+      grid-template-columns: repeat(4, minmax(80px, 1fr));
+      gap: 8px;
+    }
+    button {
+      margin-top: 16px;
+      background: var(--accent);
+      color: white;
+      border: none;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button:disabled { opacity: 0.7; cursor: progress; }
+    .status {
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 14px;
+      min-height: 20px;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Local Transcript Extractor</h1>
+      <p class="muted">Drop one video and download subtitle/text artifacts as a ZIP.</p>
+
+      <form id="transcribe-form" method="post" action="/transcribe" enctype="multipart/form-data">
+        <div id="dropzone" class="dropzone">Drop video here</div>
+
+        <label>
+          Video file
+          <input id="file" type="file" name="file" accept=".mp4,.mkv,.mov,.m4v,.avi,.mpg,.mpeg" required />
+        </label>
+
+        <details>
+          <summary>Advanced settings</summary>
+
+          <div class="grid">
+            <label>Model
+              <select name="model">
+                <option>tiny</option>
+                <option>base</option>
+                <option>small</option>
+                <option>medium</option>
+                <option selected>large-v3</option>
+              </select>
+            </label>
+            <label>Device
+              <select name="device">
+                <option selected>auto</option>
+                <option>cpu</option>
+                <option>cuda</option>
+              </select>
+            </label>
+            <label>Compute type
+              <input name="compute_type" value="int8" />
+            </label>
+            <label>Language (optional)
+              <input name="language" placeholder="e.g. en" />
+            </label>
+            <label>Beam size
+              <input type="number" min="1" name="beam_size" value="5" />
+            </label>
+            <label>Temperature
+              <input type="number" name="temperature" value="0.0" min="0" max="1" step="0.1" />
+            </label>
+            <label>Subtitle chunk size
+              <input type="number" min="0" name="subtitle_chunk_size" value="3" />
+            </label>
+            <label>Subtitle chunk mode
+              <select name="subtitle_chunk_mode">
+                <option value="fixed">fixed</option>
+                <option selected value="adaptive">adaptive</option>
+              </select>
+            </label>
+          </div>
+
+          <label>Initial prompt (optional)
+            <textarea name="initial_prompt" placeholder="Optional domain context"></textarea>
+          </label>
+
+          <div class="grid">
+            <label class="row"><input type="checkbox" name="vad" value="true" />Enable VAD filter</label>
+            <label class="row"><input type="checkbox" name="no_condition_on_previous" value="true" />Disable conditioning on previous text</label>
+            <label class="row"><input type="checkbox" name="word_timestamps" value="true" />Emit word timestamps</label>
+          </div>
+        </details>
+
+        <label style="margin-top:14px;"><strong>Output formats</strong></label>
+        <div class="outputs">
+          <label class="row"><input type="checkbox" name="out_txt" value="true" />TXT</label>
+          <label class="row"><input type="checkbox" name="out_srt" value="true" checked />SRT</label>
+          <label class="row"><input type="checkbox" name="out_vtt" value="true" />VTT</label>
+          <label class="row"><input type="checkbox" name="out_json" value="true" />JSON</label>
+        </div>
+
+        <button id="submit" type="submit">Transcribe and download ZIP</button>
+        <div id="status" class="status"></div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    const form = document.getElementById('transcribe-form');
+    const submitBtn = document.getElementById('submit');
+    const status = document.getElementById('status');
+    const dropzone = document.getElementById('dropzone');
+    const fileInput = document.getElementById('file');
+
+    ['dragenter', 'dragover'].forEach(evt => {
+      dropzone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        dropzone.classList.add('drag');
+      });
+    });
+
+    ['dragleave', 'drop'].forEach(evt => {
+      dropzone.addEventListener(evt, (e) => {
+        e.preventDefault();
+        dropzone.classList.remove('drag');
+      });
+    });
+
+    dropzone.addEventListener('drop', (e) => {
+      const files = e.dataTransfer.files;
+      if (files.length) fileInput.files = files;
+    });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      submitBtn.disabled = true;
+      status.textContent = 'Processing locally. Please wait...';
+      try {
+        const data = new FormData(form);
+        const res = await fetch('/transcribe', { method: 'POST', body: data });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || 'Request failed');
+        }
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const cd = res.headers.get('Content-Disposition') || '';
+        const match = cd.match(/filename=\"?([^\";]+)\"?/);
+        a.href = url;
+        a.download = match ? match[1] : 'transcript_artifacts.zip';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+        status.textContent = 'Done.';
+      } catch (err) {
+        status.textContent = `Error: ${err.message}`;
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

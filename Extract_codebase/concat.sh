@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 # Concatenate project files into context.txt with a filtered directory tree,
-# STRICTLY excluding .git, venv/.venv (and all descendants), __pycache__,
-# .next, .open-next, .wrangler, node_modules, the output file itself, concat.sh,
-# .gitignore, ./package.json, ./package-lock.json, .tmp-seed.sql,
-# and the specific path venv/bin/flask.
+# STRICTLY excluding:
+#   .git, .venv, venv, __pycache__, .next, .open-next, .wrangler,
+#   node_modules, vendor, dist,
+#   build outputs and vendor trees (build, .pio, .idea, .vscode, third_party),
+#   the output file itself, concat.sh,
+#   .gitignore, ./package.json, ANY package-lock.json, ANY *.lock,
+#   .tmp-seed.sql, venv/bin/flask, .DS_Store, *.excalidraw,
+#   ANY *.tsbuildinfo files, and binary artifacts (*.elf, *.bin, *.hex, *.map, *.o, *.a, *.d, *.su).
 
 set -euo pipefail
 
@@ -15,7 +19,7 @@ OUT_BASENAME="$(basename "$OUT")"
 
 # --- 1) Write a filtered directory tree at the top ---
 {
-  printf "Project tree (excluding: .git, .venv, venv, __pycache__, .next, .open-next, .wrangler, node_modules, %s, concat.sh, .gitignore, .tmp-seed.sql, ./package.json, ./package-lock.json, venv/bin/flask)\n" "$OUT_BASENAME"
+  printf "Project tree (excluding: .git, .venv, venv, __pycache__, .next, .open-next, .wrangler, node_modules, vendor, dist, build, .pio, .idea, .vscode, third_party, %s, concat.sh, .gitignore, .tmp-seed.sql, ./package.json, all package-lock.json, all *.lock, all *.tsbuildinfo, venv/bin/flask, .DS_Store, *.excalidraw, and binary artifacts)\n" "$OUT_BASENAME"
   python3 - <<'PY' "$OUT_BASENAME"
 import os, sys
 
@@ -29,15 +33,28 @@ skip_dirs = {
     '.open-next',
     '.wrangler',
     'node_modules',
+    'vendor',
+    'dist',
+    'build',
+    '.pio',
+    '.idea',
+    '.vscode',
+    'third_party',
 }
-# basename-level skips
-skip_files = {out_name, 'concat.sh', '.gitignore', '.tmp-seed.sql'}
+# basename-level skips (applies anywhere)
+skip_files = {
+    out_name,
+    'concat.sh',
+    '.gitignore',
+    '.tmp-seed.sql',
+    '.DS_Store',
+    'package-lock.json',  # skip all package-lock.json
+}
+# exact-path skips (for specific paths only)
 skip_exact_paths = {
     os.path.normpath('venv/bin/flask'),
     os.path.normpath('./package.json'),
-    os.path.normpath('./package-lock.json'),
     os.path.normpath('package.json'),
-    os.path.normpath('package-lock.json'),
 }
 
 def is_skipped_path(path):
@@ -49,9 +66,21 @@ def is_skipped_path(path):
     # Skip if any component is a skipped directory
     if any(p in skip_dirs for p in parts):
         return True
-    # Skip files by basename
+    # Skip files by basename (applies everywhere)
     base = os.path.basename(npath)
     if base in skip_files:
+        return True
+    # Skip any file ending with .excalidraw
+    if base.endswith('.excalidraw'):
+        return True
+    # Skip any lock file (bun.lock, yarn.lock, etc.)
+    if base.endswith('.lock'):
+        return True
+    # Skip TS build-info files
+    if base.endswith('.tsbuildinfo'):
+        return True
+    # Skip compiled/binary outputs that don't add source context
+    if base.endswith(('.elf', '.bin', '.hex', '.map', '.o', '.a', '.d', '.su')):
         return True
     return False
 
@@ -103,6 +132,8 @@ PY
 } >> "$OUT"
 
 # --- 2) Append concatenated file contents with strict filtering ---
+# Skip all package-lock.json, *.lock, *.tsbuildinfo, .DS_Store, *.excalidraw,
+# compiled artifacts, and vendor/build trees anywhere.
 find . \
   -type d \( \
     -name '.git' -o \
@@ -112,7 +143,14 @@ find . \
     -name '.next' -o \
     -name '.open-next' -o \
     -name '.wrangler' -o \
-    -name 'node_modules' \
+    -name 'node_modules' -o \
+    -name 'vendor' -o \
+    -name 'dist' -o \
+    -name 'build' -o \
+    -name '.pio' -o \
+    -name '.idea' -o \
+    -name '.vscode' -o \
+    -name 'third_party' \
   \) -prune -o \
   -type f \
   ! -name "$OUT_BASENAME" \
@@ -121,6 +159,21 @@ find . \
   ! -name '.open-next' \
   ! -name '.wrangler' \
   ! -name '.tmp-seed.sql' \
+  ! -name '.DS-Store' \
+  ! -name '.DS_Store' \
+  ! -name 'package-lock.json' \
+  ! -name '*.lock' \
+  ! -name '*.tsbuildinfo' \
+  ! -name '*.excalidraw' \
+  ! -name '*.elf' \
+  ! -name '*.bin' \
+  ! -name '*.hex' \
+  ! -name '*.map' \
+  ! -name '*.o' \
+  ! -name '*.a' \
+  ! -name '*.d' \
+  ! -name '*.su' \
+  ! -name '*.svg' \
   ! -path './.git/*' \
   ! -path './.venv/*' \
   ! -path './venv/*' \
@@ -129,9 +182,15 @@ find . \
   ! -path './.open-next/*' \
   ! -path './.wrangler/*' \
   ! -path './node_modules/*' \
+  ! -path './vendor/*' \
+  ! -path './dist/*' \
+  ! -path './build/*' \
+  ! -path './.pio/*' \
+  ! -path './.idea/*' \
+  ! -path './.vscode/*' \
+  ! -path './third_party/*' \
   ! -path './venv/bin/flask' \
   ! -path './package.json' \
-  ! -path './package-lock.json' \
   -print0 |
 while IFS= read -r -d '' file; do
   if grep -Iq . "$file" || [ ! -s "$file" ]; then

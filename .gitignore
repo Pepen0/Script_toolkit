@@ -1,5 +1,76 @@
-/.DS_Store
+# --------------------------------------------------
+# Global OS / editor noise
+# --------------------------------------------------
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
 
-# Python virtual environments
-Live_transcript_generator/venv
-Extract_transcript_from_video/venv
+# --------------------------------------------------
+# Python environments / caches
+# --------------------------------------------------
+.venv/
+venv/
+ENV/
+env/
+*/.venv/
+*/venv/
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# --------------------------------------------------
+# Packaging/build artifacts
+# --------------------------------------------------
+build/
+*.spec
+*.egg-info/
+dist/
+!Transcript_web_app/dist/
+!Transcript_web_app/dist/Transcript Extractor.app/
+!Transcript_web_app/dist/Transcript Extractor.app/**
+
+# --------------------------------------------------
+# Logs / temp
+# --------------------------------------------------
+*.log
+*.tmp
+*.temp
+.cache/
+
+# --------------------------------------------------
+# Model / transcript / media outputs (all projects)
+# --------------------------------------------------
+transcripts/
+transcripts_adaptive/
+**/outputs/
+**/output.srt
+**/output.ass
+**/audio.wav
+**/audio.mp3
+
+# Local media inputs (usually large / personal)
+*.mp4
+*.mkv
+*.mov
+*.m4v
+*.avi
+*.mpg
+*.mpeg
+
+# --------------------------------------------------
+# Project-specific generated artifacts
+# --------------------------------------------------
+Transcript_web_app/assets/icon.iconset/
+Transcript_web_app/__pycache__/
+Transcript_web_app/*.spec
+Transcript_web_app/build/

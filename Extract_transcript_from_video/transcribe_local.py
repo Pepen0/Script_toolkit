@@ -94,6 +94,65 @@ def write_json(out_json: Path, language: str, duration: Optional[float], segment
         json.dump(payload, f, ensure_ascii=False, indent=2)
 
 
+def build_chunked_word_segments(
+    words: List[Tuple[float, float, str]], chunk_size: int
+) -> List[Tuple[float, float, str]]:
+    chunked_segments: List[Tuple[float, float, str]] = []
+    if chunk_size <= 0:
+        return chunked_segments
+
+    for i in range(0, len(words), chunk_size):
+        chunk = words[i : i + chunk_size]
+        if not chunk:
+            continue
+        start = chunk[0][0]
+        end = chunk[-1][1]
+        text = "".join(w[2] for w in chunk).strip()
+        if text:
+            chunked_segments.append((start, end, text))
+    return chunked_segments
+
+
+def _word_visual_weight(text: str) -> float:
+    core = text.strip(" \t\n\r.,!?;:\"'()[]{}")
+    n = len(core)
+    if n <= 4:
+        return 1.0
+    if n <= 7:
+        return 1.5
+    return 3.0
+
+
+def build_adaptive_chunked_word_segments(
+    words: List[Tuple[float, float, str]], chunk_budget: int
+) -> List[Tuple[float, float, str]]:
+    chunked_segments: List[Tuple[float, float, str]] = []
+    if chunk_budget <= 0:
+        return chunked_segments
+
+    i = 0
+    while i < len(words):
+        start = i
+        used = 0.0
+        while i < len(words):
+            next_weight = _word_visual_weight(words[i][2])
+            # Always take at least one word, even if it exceeds budget.
+            if i == start:
+                used += next_weight
+                i += 1
+                continue
+            if used + next_weight > chunk_budget:
+                break
+            used += next_weight
+            i += 1
+
+        chunk = words[start:i]
+        text = "".join(w[2] for w in chunk).strip()
+        if text:
+            chunked_segments.append((chunk[0][0], chunk[-1][1], text))
+    return chunked_segments
+
+
 def transcribe_one(
     in_path: Path,
     out_root: Path,
@@ -107,6 +166,8 @@ def transcribe_one(
     condition_on_previous_text: bool,
     temperature: float,
     word_timestamps: bool,
+    subtitle_chunk_size: int,
+    subtitle_chunk_mode: str,
 ) -> Tuple[Path, Optional[str], float]:
     """
     Returns: (source_path, detected_language, elapsed_seconds)
@@ -127,26 +188,46 @@ def transcribe_one(
 
     start_time = time.time()
 
+    needs_word_timestamps = word_timestamps or subtitle_chunk_size > 0
+
     segments_iter, info = model.transcribe(
         str(in_path),
         language=language,                 # None => auto-detect
         vad_filter=vad_filter,
         beam_size=beam_size,
-        best_of=beam_size,        initial_prompt=initial_prompt,
+        best_of=beam_size,
+        initial_prompt=initial_prompt,
         condition_on_previous_text=condition_on_previous_text,
         temperature=temperature,
-        word_timestamps=word_timestamps,
+        word_timestamps=needs_word_timestamps,
         # chunk_length: default is fine; change if you have OOMs
     )
 
     detected_language = info.language
     collected: List[Tuple[float, float, str]] = []
+    collected_words: List[Tuple[float, float, str]] = []
     for seg in segments_iter:
         collected.append((seg.start, seg.end, seg.text))
+        if needs_word_timestamps and seg.words:
+            for word in seg.words:
+                if word.start is None or word.end is None:
+                    continue
+                collected_words.append((word.start, word.end, word.word))
 
     write_txt(out_txt, collected)
-    write_srt(out_srt, collected)
-    write_vtt(out_vtt, collected)
+    if subtitle_chunk_size > 0:
+        if subtitle_chunk_mode == "adaptive":
+            subtitle_segments = build_adaptive_chunked_word_segments(
+                collected_words, subtitle_chunk_size
+            )
+        else:
+            subtitle_segments = build_chunked_word_segments(
+                collected_words, subtitle_chunk_size
+            )
+    else:
+        subtitle_segments = collected
+    write_srt(out_srt, subtitle_segments)
+    write_vtt(out_vtt, subtitle_segments)
     write_json(out_json, detected_language, info.duration, collected)
 
     elapsed = time.time() - start_time
@@ -179,6 +260,19 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--no-condition-on-previous", action="store_true", help="Do not condition on previous text.")
     p.add_argument("--temperature", type=float, default=0.0, help="Decoding temperature.")
     p.add_argument("--word-timestamps", action="store_true", help="Emit word timestamps (slower, larger JSON).")
+    p.add_argument(
+        "--subtitle-chunk-size",
+        type=int,
+        default=0,
+        help="Words per subtitle cue for SRT/VTT (e.g., 2 or 3). 0 disables chunking.",
+    )
+    p.add_argument(
+        "--subtitle-chunk-mode",
+        type=str,
+        default="fixed",
+        choices=["fixed", "adaptive"],
+        help="Chunking mode for SRT/VTT when --subtitle-chunk-size > 0.",
+    )
     p.add_argument("--workers", type=int, default=1, help="Parallel workers (each loads a model; set >1 only if you have RAM/VRAM).")
     return p.parse_args()
 
@@ -197,6 +291,8 @@ def _worker(args_tuple):
         condition_on_previous_text=not args_dict["no_condition_on_previous"],
         temperature=args_dict["temperature"],
         word_timestamps=args_dict["word_timestamps"],
+        subtitle_chunk_size=args_dict["subtitle_chunk_size"],
+        subtitle_chunk_mode=args_dict["subtitle_chunk_mode"],
     )
 
 
